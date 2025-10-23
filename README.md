@@ -8,7 +8,7 @@ Microsoft's setup process, written by a Linux user who got tired of doing things
 - Install Windows to portable media, such as external USB SSD and HDD drives, and even some flash drives, provided they are actually fast enough to run a full operating system
 - Have a fully functional Windows operating system up in just minutes.
 # How to use
-	Simply run `./wininstall.sh`. and follow the onscreen prompts.
+	Simply run `./wininstall.sh` and follow the onscreen prompts.
 # Supported Windows versions
 | Version | Supported |
 | ----- | ----- |
