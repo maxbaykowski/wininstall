@@ -15,6 +15,7 @@ Microsoft's setup process, written by a Linux user who got tired of doing things
 | Windows 11 | Fully supported |
 | Windows 10 | Fully supported |
 | Windows 8.1 | Fully supported |
+| Windows 8 | Fully supported |
 | Windows 7 | Supported on BIOS firmware only |
 | Windows Vista and earlier | Not supported |
 	Please note that although Windows 7 X64 does have partial support for UEFI firmware, this script currently only supports BIOS mode installs at this time, as noted in the table above. if you attempt to install Windows 7 on UEFI firmware, the script will revert to installing in BIOS mode by default. You might still be able to boot the install, provided that your firmware has UEFI CSM support and that it is enabled in firmware.
