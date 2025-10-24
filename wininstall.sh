@@ -61,8 +61,9 @@ function check_reqs {
 		fi
 	done
 	if [ "$missingreqs" = "1" ]; then
-		#Return 1 if requirements are missing
-		return 1
+		#Error out
+		echo "Error: Some requirements are missing" 1>&2
+		exit 1
 	fi
 }
 function cleanup {
@@ -212,7 +213,7 @@ function detect_winre {
 function disk_select {
 	local i=""
 	#Print disks to a file
-	lsblk -bde7 -lnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
+	lsblk -bde7 -rnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
 	#Echo the refresh option
 	echo "Refresh" >>"$tempdir/disks"
 	while [ -z "$i" ]; do
@@ -223,11 +224,11 @@ function disk_select {
 		if [ "$itemname" = "Refresh" ]; then
 			unset i
 			#Print disks to file, overwriting the original
-			lsblk -bde7 -lnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
+			lsblk -bde7 -rnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
 			#Echo the refresh option
 			echo "Refresh" >>"$tempdir/disks"
 			continue
-		elif [ "$(lsblk -bdlnoSIZE "$i")" -lt "$minsize" ]; then
+		elif [ "$(lsblk -bdrnoSIZE "$i")" -lt "$minsize" ]; then
 			#The disk is too small
 			echo "Error: Disk must be at least $$print_in_human_readable_format) in size" 1>&2
 			unset i
@@ -257,7 +258,7 @@ function format_boot {
 function format_efi {
 	is_blk "$efipart"
 	#Check if the ESP already contains a FAT32 filesystem
-	if [ "$(lsblk -nloFSVER)" = "FAT32" ] && [ "$(yes_no "Your EFI System Partition already contains a FAT32 filesystem. Format anyway?")" = "n" ]; then
+	if [ "$(lsblk -nroFSVER)" = "FAT32" ] && [ "$(yes_no "Your EFI System Partition already contains a FAT32 filesystem. Format anyway?")" = "n" ]; then
 		#We return a value of 0 if both statements are true
 		return 0
 	fi
@@ -297,7 +298,7 @@ select disk 0
 select partition $bootnum
 assign letter=S
 EOF
-	if [ "$datapart" ] && [ "$datanum" ]; then
+	if [ "$bootnum" != "$datanum" ] && [ "$bootpart" != "$datapart" ]; then
 		#Assign the letter W to the Windows partition
 		cat <<EOF
 select partition $datanum
@@ -330,7 +331,7 @@ EOF
 }
 function generate_install_script_bios {
 	#This is the function that will set up BCD entries as well as register WindowsRE (if present)
-	if [ "$bootnum" ] && [ -z "$datanum" ]; then
+	if [ "$bootnum" = "$datanum" ] && [ "$bootpart" = "$datapart" ]; then
 		#We set the Windows drive letter as S to avoid code complexity
 		local windowsletter=S
 	else
@@ -516,7 +517,7 @@ function image_select {
 	echo $image
 }
 function is_blk {
-	if [ -z "$1" ] || ! lsblk -nloNAME -p | grep -qw "$1"; then
+	if [ -z "$1" ] || ! lsblk -nroNAME -p | grep -qw "$1"; then
 		echo "Error: $disk: Not a block device" 1>&2
 		exit 1
 	fi
@@ -528,7 +529,7 @@ function is_mounted {
 	#Next we check if the disk is a block device
 	is_blk "$1"
 	#Next we check if disk is mounted
-	if [ "$(lsblk -nloMOUNTPOINT "$1" | sed '/^$/d' | wc -l)" -gt 0 ]; then
+	if [ "$(lsblk -nroMOUNTPOINT "$1" | sed '/^$/d' | wc -l)" -gt 0 ]; then
 		#Disk is mounted
 		true
 	else
@@ -539,7 +540,7 @@ function is_mounted {
 function is_removable {
 	is_blk $1
 	#Check if disk is removable
-	case "$(lsblk -dnloHOTPLUG "$1")" in
+	case "$(lsblk -dnroHOTPLUG "$1")" in
 	1)
 		#Disk is removable
 		true
@@ -634,7 +635,7 @@ function partition {
 function part_table {
 	is_blk "$1"
 	#Prints the disk partition table type
-	lsblk -dnloPTTYPE "$1"
+	lsblk -dnroPTTYPE "$1"
 }
 function print_in_human_readable_format {
 	numfmt --to=si --format '%1f' "$1"
@@ -711,7 +712,7 @@ function verify_partitions_bios {
 		return 1
 	fi
 	#Get an array containing the disk partitions
-	mapfile -t parts < <(lsblk -blnoPARTN,NAME,SIZE,TYPE,PARTTYPE,PARTFLAGS -p "$1" | awk '$4=="part"')
+	mapfile -t parts < <(lsblk -brnoPARTN,NAME,SIZE,TYPE,PARTTYPE,PARTFLAGS -p "$1" | awk '$4=="part"')
 	#Parse the partition array
 	for i in "${parts[@]}"; do
 		#Get the partition type
@@ -739,7 +740,7 @@ function verify_partitions_bios {
 		echo "Error: Only 1 partition can be set as active" 1>&2
 		return 1
 	elif [ "${#bootparts[@]}" = 0 ]; then
-		echo "Error: Disk does not contain a boot System Partition" 1>&2
+		echo "Error: Disk does not contain a boot partition" 1>&2
 		return 1
 	else
 		export bootpart="$(echo "$bootparts" | awk '{print $2}')"
@@ -777,6 +778,11 @@ function verify_partitions_bios {
 		export winrepart="$(echo "$winreparts" | awk '{print $2}')"
 		export winrenum="$(echo "$winreparts" | awk '{print $1}')"
 	fi
+	#We set the data partition variable equal to the boot partition if no data partition was found
+	if is_removable "$1" && [ -z "$datapart" ] && [ -z "$datanum" ]; then
+		export datanum="$bootnum"
+		export datapart="$bootpart"
+	fi
 	cat <<EOF
 MBR has been verified:
 Boot partition number: $bootnum
@@ -805,7 +811,7 @@ function verify_partitions_uefi {
 		return 1
 	fi
 	#Get an array containing the disk partitions
-	mapfile -t parts < <(lsblk -blnoPARTN,NAME,SIZE,TYPE,PARTTYPE -p "$1" | awk '$4=="part"')
+	mapfile -t parts < <(lsblk -brnoPARTN,NAME,SIZE,TYPE,PARTTYPE -p "$1" | awk '$4=="part"')
 	#Parse the partition array
 	for i in "${parts[@]}"; do
 		#Get the guid of the partition
