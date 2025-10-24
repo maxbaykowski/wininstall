@@ -1056,7 +1056,7 @@ echo "Applying the Windows image"
 wimapply "$wimpath" "$image" "$datapart"
 set +e
 echo "Running the Windows PE in QEMU to finish install"
-qemu-system-x86_64 -machine pc,accel=kvm:tcg -cpu host -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
+qemu-system-x86_64 -machine pc,accel=kvm:tcg -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
 #Cat the log, which probably doesn't contain much but is still worth looking at
 if read_log; then
 	echo "Installation completed successfully"
