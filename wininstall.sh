@@ -37,6 +37,33 @@ function alignment_value {
 	#Now we multiply 1024*1024 for an alignment of 1 MiB, and devide that by our sector size
 	echo "$((1024 * 1024 / $sectorsize))"
 }
+function ask_driver_dir {
+	while [ -z "$driverfolder" ]; do
+		#Prompt the user for the ISO file path
+		echo "Please enter the path to the folder containing drivers" 1>&2
+		read -e driverfolder
+		#Checks
+		if [ -z "$driverfolder" ]; then
+			#User didn't input anything
+			echo "Error: you didn't input anything. Try again." 1>&2
+			#Unset driverfolder so the loop will restart
+			unset driverfolder
+		elif [ -f "$driverfolder" ]; then
+			#Path is not a directory
+			echo "Error: $driverfolder: Not a directory" 1>&2
+			unset driverfolder
+		elif [ ! -e "$driverfolder" ]; then
+			#The user typed input, but the path is invalid
+			echo "Error: $driverfolder: No such file or directory" 1>&2
+			#Again we unset the driverfolder variable
+			unset driverfolder
+		fi
+		#If the loop has come this far then the directory exists
+	done
+	#Relative paths are accepted when typing the driver path, but we use realpath when printing it to stdout to avoid errors
+	driverfolder="$(realpath "$driverfolder")"
+	echo $driverfolder
+}
 function autodetect_windows_version {
 	#We use a little trick to get the major Windows version in the ISO
 	local majorversion="$(xmlstarlet sel -t -m '/WIM/IMAGE' -v 'NAME' -n "$tempdir/wiminfo.xml" | awk '{print $2}' | uniq)"
@@ -91,15 +118,38 @@ function contains_wim {
 		return 1
 	fi
 }
+function copy_drivers {
+is_blk "$datapart"
+	if type rsync 1>/dev/null 2>/dev/null; then
+		local cpcommand="rsync -r --human-readable --progress"
+	else
+		local cpcommand="cp -rv"
+	fi
+if [ -z "$1" ]; then
+echo "Error: You must specify the driver path" 1>&2
+return 1
+elif [ ! -e "$1" ]; then
+echo "Error: $1: No such file or directory" 1>&2
+return 1
+elif [ -f "$1" ]; then
+echo "Error: $1: Not a directory" 1>&2
+return 1
+fi
+#We copy drivers to the Windows partition so it can easily see them
+mount --mkdir "$datapart" "$tempdir/windows" || exit 1
+mkdir -p "$tempdir/windows/drivers"
+$cpcommand "$1/" "$tempdir/windows/drivers/" || return 1
+umount "$tempdir/windows" || exit 1
+}
 function copy_winre {
 	#First we detect if rsync is installed. It will show progress
 	is_blk "$winrepart"
-	#First mount the WIM image and the selected index
 	if type rsync 1>/dev/null 2>/dev/null; then
 		local cpcommand="rsync --human-readable --progress"
 	else
 		local cpcommand="cp"
 	fi
+	#First mount the WIM image and the selected index
 	wimmount "$wimpath" "$image" "$tempdir/wim"
 	#Next we mount the recovery partition
 	mount "$winrepart" "$tempdir/winre"
@@ -343,6 +393,12 @@ diskpart /s X:\mountparts
 bcdboot $windowsletter:\Windows /s S:
 bootsect /nt60 S: /mbr
 EOF
+if [ "$drivers" ]; then
+cat << EOF
+dism /add-driver /driver:$windowsletter:\drivers /image:$windowsletter:\ /recurse
+copy X:\windows\Logs\DISM\dism.log L:\dism.log
+EOF
+fi
 	if [ "$winrepart" ] && [ "$winrenum" ]; then
 		#Register Windows Recovery
 		cat <<EOF
@@ -359,6 +415,12 @@ function generate_install_script_uefi {
 diskpart /s X:\mountparts
 bcdboot W:\Windows /s S: /f UEFI
 EOF
+if [ "$drivers" ]; then
+cat << EOF
+dism /add-driver /driver:W:\drivers /image:W: /recurse
+copy X:\windows\Logs\DISM\dism.log L:\dism.log
+EOF
+fi
 	if [ "$winrepart" ] && [ "$winrenum" ]; then
 		#Register Windows Recovery
 		cat <<EOF
@@ -645,6 +707,12 @@ function read_log {
 	mount --mkdir "${logloop}p1" "$tempdir/log"
 	if [ -f "$tempdir/log/log.txt" ]; then
 		cat "$tempdir/log/log.txt"
+if [ -f "$tempdir/log/dism.log" ]; then
+#We copy the DISM log to /var/log/wininstall/dism.log
+mkdir /var/log/wininstall
+cp "$tempdir/log/dism.log" "/var/log/wininstall/"
+echo "The windows DISM log can be found at: /var/log/wininstall/dism.log"
+fi
 		umount "$tempdir/log"
 		return
 	else
@@ -990,10 +1058,23 @@ fi
 export minsize=$(min_size "$majorversion")
 #Select the WIM image to be installed
 export image=$(image_select)
+#Prompt the user whether to install drivers
+clear
+case "$(yes_no "Install additional drivers?")" in
+y)
+clear
+export drivers="$(ask_driver_dir)"
+;;
+n)
+echo "Continuing to next step" 1>&2
+;;
+esac
+clear
 #Now we get the target disk
 disk_select
 #Check to see if the disk is mounted
 if is_mounted $disk; then
+clear
 	case "$(yes_no "The disk $disk is currently mounted. Attempt to unmount it?")" in
 	y)
 		echo "Attempting to unmount disk..."
@@ -1054,10 +1135,19 @@ fi
 #The next step is to apply the WIM file itself
 echo "Applying the Windows image"
 wimapply "$wimpath" "$image" "$datapart"
+if [ "$drivers" ]; then
+echo "Copying drivers..."
+copy_drivers "$drivers" || echo "Error: some drivers failed to copy" 1>&2
+fi
 set +e
 echo "Running the Windows PE in QEMU to finish install"
+if [ -e "/dev/kvm" ]; then
+qemu-system-x86_64 -machine pc,accel=kvm:tcg -cpu host -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
+else
+echo "Warning: Virtualization is not enabled, running QEMU will be very slow" 1>&2
 qemu-system-x86_64 -machine pc,accel=kvm:tcg -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
-#Cat the log, which probably doesn't contain much but is still worth looking at
+fi
+#Print the log to stdout which contains the WIndows command lin output
 if read_log; then
 	echo "Installation completed successfully"
 else
