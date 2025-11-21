@@ -61,7 +61,7 @@ function ask_driver_dir {
 		#If the loop has come this far then the directory exists
 	done
 	#Relative paths are accepted when typing the driver path, but we use realpath when printing it to stdout to avoid errors
-	driverfolder="$(realpath "$driverfolder")"
+	local driverfolder="$(realpath "$driverfolder")"
 	echo $driverfolder
 }
 function autodetect_windows_version {
@@ -94,14 +94,15 @@ function check_reqs {
 	fi
 }
 function cleanup {
-	if [ -z "$tempdir" ]; then
-		return
-	fi
-	umount -q $tempdir/{iso,log,wim,windows,winre}
 	if [ "$logloop" ]; then
 		losetup -d "$logloop"
 	fi
-	rm -rf "$tempdir"
+	if [ -z "$tempdir" ]; then
+		return
+	else
+		umount -q $tempdir/{iso,log,wim,windows,winre}
+		rm -rf "$tempdir"
+	fi
 }
 function contains_wim {
 	#Ensure that the ISO file contains an install.wim file
@@ -116,30 +117,31 @@ function contains_wim {
 	else
 		#Couldn't find install.wim, so return 1
 		return 1
+	#I don't look for install.esd files on purpose
 	fi
 }
 function copy_drivers {
-is_blk "$datapart"
+	is_blk "$datapart"
 	if type rsync 1>/dev/null 2>/dev/null; then
 		local cpcommand="rsync -r --human-readable --progress"
 	else
 		local cpcommand="cp -rv"
 	fi
-if [ -z "$1" ]; then
-echo "Error: You must specify the driver path" 1>&2
-return 1
-elif [ ! -e "$1" ]; then
-echo "Error: $1: No such file or directory" 1>&2
-return 1
-elif [ -f "$1" ]; then
-echo "Error: $1: Not a directory" 1>&2
-return 1
-fi
-#We copy drivers to the Windows partition so it can easily see them
-mount --mkdir "$datapart" "$tempdir/windows" || exit 1
-mkdir -p "$tempdir/windows/drivers"
-$cpcommand "$1/" "$tempdir/windows/drivers/" || return 1
-umount "$tempdir/windows" || exit 1
+	if [ -z "$1" ]; then
+		echo "Error: You must specify the driver path" 1>&2
+		return 1
+	elif [ ! -e "$1" ]; then
+		echo "Error: $1: No such file or directory" 1>&2
+		return 1
+	elif [ -f "$1" ]; then
+		echo "Error: $1: Not a directory" 1>&2
+		return 1
+	fi
+	#We copy drivers to the Windows partition so it can easily see them
+	mount --mkdir "$datapart" "$tempdir/windows" || exit 1
+	mkdir -p "$tempdir/windows/drivers"
+	$cpcommand "$1/" "$tempdir/windows/drivers/" || return 1
+	umount "$tempdir/windows" || exit 1
 }
 function copy_winre {
 	#First we detect if rsync is installed. It will show progress
@@ -393,12 +395,12 @@ diskpart /s X:\mountparts
 bcdboot $windowsletter:\Windows /s S:
 bootsect /nt60 S: /mbr
 EOF
-if [ "$drivers" ]; then
-cat << EOF
+	if [ "$drivers" ]; then
+		cat <<EOF
 dism /add-driver /driver:$windowsletter:\drivers /image:$windowsletter:\ /recurse
 copy X:\windows\Logs\DISM\dism.log L:\dism.log
 EOF
-fi
+	fi
 	if [ "$winrepart" ] && [ "$winrenum" ]; then
 		#Register Windows Recovery
 		cat <<EOF
@@ -415,12 +417,12 @@ function generate_install_script_uefi {
 diskpart /s X:\mountparts
 bcdboot W:\Windows /s S: /f UEFI
 EOF
-if [ "$drivers" ]; then
-cat << EOF
+	if [ "$drivers" ]; then
+		cat <<EOF
 dism /add-driver /driver:W:\drivers /image:W: /recurse
 copy X:\windows\Logs\DISM\dism.log L:\dism.log
 EOF
-fi
+	fi
 	if [ "$winrepart" ] && [ "$winrenum" ]; then
 		#Register Windows Recovery
 		cat <<EOF
@@ -707,12 +709,12 @@ function read_log {
 	mount --mkdir "${logloop}p1" "$tempdir/log"
 	if [ -f "$tempdir/log/log.txt" ]; then
 		cat "$tempdir/log/log.txt"
-if [ -f "$tempdir/log/dism.log" ]; then
-#We copy the DISM log to /var/log/wininstall/dism.log
-mkdir /var/log/wininstall
-cp "$tempdir/log/dism.log" "/var/log/wininstall/"
-echo "The windows DISM log can be found at: /var/log/wininstall/dism.log"
-fi
+		if [ -f "$tempdir/log/dism.log" ]; then
+			#We copy the DISM log to /var/log/wininstall/dism.log
+			mkdir /var/log/wininstall
+			cp "$tempdir/log/dism.log" "/var/log/wininstall/"
+			echo "The windows DISM log can be found at: /var/log/wininstall/dism.log"
+		fi
 		umount "$tempdir/log"
 		return
 	else
@@ -1000,27 +1002,27 @@ function yes_no {
 }
 #We first do some initialization
 #Ensure that all requirements exist
-export reqs=("awk" "fdisk" "mkfs.ntfs" "mkfs.vfat" "mkisofs" "mkwinpeimg" "ntfs-3g" "qemu-system-x86_64" "wimapply" "wimlib-imagex" "wimmount" "xmlstarlet")
+reqs=("awk" "fdisk" "mkfs.ntfs" "mkfs.vfat" "mkisofs" "mkwinpeimg" "ntfs-3g" "qemu-system-x86_64" "wimapply" "wimlib-imagex" "wimmount" "xmlstarlet")
 check_reqs "${reqs[@]}"
 #Trap the EXIT signal so that the cleanup function runs first
 trap cleanup EXIT
 #Make sure we're running as root
 root_check
 #Create temp directory
-export tempdir=$(mktemp -d)
+tempdir=$(mktemp -d)
 #Make some directories
 mkdir -p $tempdir/{iso,log,scripts,winre,wim,windows}
 #Detect firmware
-export fw=$(detect_fw)
+fw=$(detect_fw)
 #Store supported Windows versions in an array
-export supported_versions=("7" "8" "8.1" "10" "11")
+supported_versions=("7" "8" "8.1" "10" "11")
 #And the minimum disk requirements for each OS
-export size=("20000000000" "20000000000" "20000000000" "32000000000" "64000000000")
+size=("20000000000" "20000000000" "20000000000" "32000000000" "64000000000")
 #Ensure that all requirements exist
 check_reqs "${reqs[@]}"
 #Call ISO select, which prompts the user to select a Windows ISO.
 clear
-export iso="$(iso_select)"
+iso="$(iso_select)"
 #Mount the selected ISO and exit if it fails
 if ! iso_mount; then
 	echo "Error: Could not mount ISO image" 1>&2
@@ -1039,7 +1041,7 @@ fi
 #Now we need to extract the WIM XML and parse it
 extract_xml "$wimpath"
 #Next we run the get_version function to detect the Windows version we're dealing with
-export majorversion=$(get_version)
+majorversion=$(get_version)
 #Check if version is supported
 if ! supported_windows_version "$majorversion" ]; then
 	exit 1
@@ -1055,26 +1057,26 @@ if [ "$majorversion" = "7" ] && [ "$fw" != "bios" ]; then
 	read -t 1
 fi
 #Get the minimum required space for this Windows version
-export minsize=$(min_size "$majorversion")
+minsize=$(min_size "$majorversion")
 #Select the WIM image to be installed
-export image=$(image_select)
+image=$(image_select)
 #Prompt the user whether to install drivers
 clear
 case "$(yes_no "Install additional drivers?")" in
 y)
-clear
-export drivers="$(ask_driver_dir)"
-;;
+	clear
+	export drivers="$(ask_driver_dir)"
+	;;
 n)
-echo "Continuing to next step" 1>&2
-;;
+	echo "Continuing to next step" 1>&2
+	;;
 esac
 clear
 #Now we get the target disk
 disk_select
 #Check to see if the disk is mounted
 if is_mounted $disk; then
-clear
+	clear
 	case "$(yes_no "The disk $disk is currently mounted. Attempt to unmount it?")" in
 	y)
 		echo "Attempting to unmount disk..."
@@ -1136,16 +1138,16 @@ fi
 echo "Applying the Windows image"
 wimapply "$wimpath" "$image" "$datapart"
 if [ "$drivers" ]; then
-echo "Copying drivers..."
-copy_drivers "$drivers" || echo "Error: some drivers failed to copy" 1>&2
+	echo "Copying drivers..."
+	copy_drivers "$drivers" || echo "Error: some drivers failed to copy" 1>&2
 fi
 set +e
 echo "Running the Windows PE in QEMU to finish install"
 if [ -e "/dev/kvm" ]; then
-qemu-system-x86_64 -machine pc,accel=kvm:tcg -cpu host -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
+	qemu-system-x86_64 -machine pc,accel=kvm:tcg -cpu host -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
 else
-echo "Warning: Virtualization is not enabled, running QEMU will be very slow" 1>&2
-qemu-system-x86_64 -machine pc,accel=kvm:tcg -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
+	echo "Warning: Virtualization is not enabled, running QEMU will be very slow" 1>&2
+	qemu-system-x86_64 -machine pc,accel=kvm:tcg -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
 fi
 #Print the log to stdout which contains the WIndows command lin output
 if read_log; then
