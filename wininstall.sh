@@ -107,11 +107,11 @@ function cleanup {
 function contains_wim {
 	#Ensure that the ISO file contains an install.wim file
 	if [ -f "$tempdir/iso/sources/install.wim" ]; then
-		export wimpath="$tempdir/iso/sources/install.wim"
+		wimpath="$tempdir/iso/sources/install.wim"
 		#ISO contains an install.wim
 		return 0
 	elif [ -f "$tempdir/iso/sources/install2.wim" ]; then
-		export wimpath="$tempdir/iso/sources/install2.wim"
+		wimpath="$tempdir/iso/sources/install2.wim"
 		#ISO contains an install2.wim
 		return 0
 	else
@@ -210,9 +210,9 @@ function create_menu {
 		#Check if input is a valid option
 		for i in $(seq 1 $end); do
 			if [ "$char" = "$i" ]; then
-				#Export option and menu item name to shell
-				export option=$char
-				export itemname=$(sed -n "${option}p" "$1")
+				#Save option and menu item name to shell variable
+				option=$char
+				itemname=$(sed -n "${option}p" "$1")
 				return
 			fi
 		done
@@ -265,7 +265,7 @@ function detect_winre {
 function disk_select {
 	local i=""
 	#Print disks to a file
-	lsblk -bde7 -rnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
+	lsblk -bdI3,8,65,66,67,68,69,70,71,128,129,130,131,132,133,134,135,179,180,259 -rnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
 	#Echo the refresh option
 	echo "Refresh" >>"$tempdir/disks"
 	while [ -z "$i" ]; do
@@ -276,19 +276,19 @@ function disk_select {
 		if [ "$itemname" = "Refresh" ]; then
 			unset i
 			#Print disks to file, overwriting the original
-			lsblk -bde7 -rnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
+			lsblk -bdI3,8,65,66,67,68,69,70,71,128,129,130,131,132,133,134,135,179,180,259 -rnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
 			#Echo the refresh option
 			echo "Refresh" >>"$tempdir/disks"
 			continue
 		elif [ "$(lsblk -bdrnoSIZE "$i")" -lt "$minsize" ]; then
 			#The disk is too small
-			echo "Error: Disk must be at least $$print_in_human_readable_format) in size" 1>&2
+			echo "Error: Disk must be at least $(print_in_human_readable_format $minsize) in size" 1>&2
 			unset i
 			continue
 		fi
 	done
 	#All checks have completed, so we Print the disk to stdout
-	export disk="$i"
+	disk="$i"
 }
 function extract_xml {
 	wiminfo --extract-xml "$tempdir/wiminfo.xml" "$1"
@@ -568,7 +568,7 @@ function get_version {
 	fi
 }
 function image_select {
-	#First we export all of the image names to a file
+	#First we save all of the image names to a file
 	xmlstarlet sel -t -m '/WIM/IMAGE' -v 'NAME' -n "$tempdir/wiminfo.xml" >"$tempdir/images"
 	local index_count="$(cat "$tempdir/images" | wc -l)"
 	if [ "$index_count" -gt 1 ]; then
@@ -663,7 +663,7 @@ type=0b
 EOF
 	#Set it up as a loop device
 	losetup -fP "$tempdir/log.img" || return 1
-	export logloop="$(losetup -lnONAME,BACK-FILE | awk -v imagepath="$tempdir/log.img" '$2==imagepath {print $1}')"
+	logloop="$(losetup -lnONAME,BACK-FILE | awk -v imagepath="$tempdir/log.img" '$2==imagepath {print $1}')"
 	#We're not done yet, we still have to format the virtual disk as FAT32
 	mkfs.vfat -F32 "${logloop}p1"
 }
@@ -813,8 +813,8 @@ function verify_partitions_bios {
 		echo "Error: Disk does not contain a boot partition" 1>&2
 		return 1
 	else
-		export bootpart="$(echo "$bootparts" | awk '{print $2}')"
-		export bootnum="$(echo "$bootparts" | awk '{print $1}')"
+		bootpart="$(echo "$bootparts" | awk '{print $2}')"
+		bootnum="$(echo "$bootparts" | awk '{print $1}')"
 	fi
 	if [ "${#dataparts[@]}" -gt 1 ]; then
 		#There is more than 1 data partition, so we have to prompt the user to select which one they want
@@ -826,11 +826,11 @@ function verify_partitions_bios {
 		done
 		create_menu "$tempdir/dataparts" "Select Your Main Windows Partition" 1>&2
 		#Now we get the device path and number for the datapartition
-		export datapart="$(echo "$itemname" | awk '{print $2}')"
-		export datanum="$(echo "${dataparts[$(($option - 1))]}" | awk '{print $1}')"
+		datapart="$(echo "$itemname" | awk '{print $2}')"
+		datanum="$(echo "${dataparts[$(($option - 1))]}" | awk '{print $1}')"
 	else
-		export datapart="$(echo "$dataparts" | awk '{print $2}')"
-		export datanum="$(echo "$dataparts" | awk '{print $1}')"
+		datapart="$(echo "$dataparts" | awk '{print $2}')"
+		datanum="$(echo "$dataparts" | awk '{print $1}')"
 	fi
 	if [ "${#winreparts[@]}" -gt 1 ]; then
 		#There is more than 1 recovery partition, so we have to prompt the user to select which one they want
@@ -842,16 +842,16 @@ function verify_partitions_bios {
 		done
 		create_menu "$tempdir/winreparts" "Select Your Recovery Partition"
 		#Now we get the device path and number for the recovery partition
-		export winrepart="$(echo "$itemname" | awk '{print $1}')"
-		export winrenum="$(echo "${winreparts[$(($option - 1))]}" | awk '{print $1}')"
+		winrepart="$(echo "$itemname" | awk '{print $1}')"
+		winrenum="$(echo "${winreparts[$(($option - 1))]}" | awk '{print $1}')"
 	else
-		export winrepart="$(echo "$winreparts" | awk '{print $2}')"
-		export winrenum="$(echo "$winreparts" | awk '{print $1}')"
+		winrepart="$(echo "$winreparts" | awk '{print $2}')"
+		winrenum="$(echo "$winreparts" | awk '{print $1}')"
 	fi
 	#We set the data partition variable equal to the boot partition if no data partition was found
 	if is_removable "$1" && [ -z "$datapart" ] && [ -z "$datanum" ]; then
-		export datanum="$bootnum"
-		export datapart="$bootpart"
+		datanum="$bootnum"
+		datapart="$bootpart"
 	fi
 	cat <<EOF
 MBR has been verified:
@@ -914,8 +914,8 @@ function verify_partitions_uefi {
 		echo "Error: Disk does not contain an EFI System Partition" 1>&2
 		return 1
 	else
-		export efipart="$(echo "$efiparts" | awk '{print $2}')"
-		export efinum="$(echo "$efiparts" | awk '{print $1}')"
+		efipart="$(echo "$efiparts" | awk '{print $2}')"
+		efinum="$(echo "$efiparts" | awk '{print $1}')"
 	fi
 	#Now we check for MSR
 	if [ "${#msrparts[@]}" -gt 1 ]; then
@@ -926,8 +926,8 @@ function verify_partitions_uefi {
 		echo "Error: Disk does not contain a Microsoft system reserved partition" 1>&2
 		return 1
 	else
-		export msrpart="$(echo "$msrparts" | awk '{print $2}')"
-		export msrnum="$(echo "$msrparts" | awk '{print $1}')"
+		msrpart="$(echo "$msrparts" | awk '{print $2}')"
+		msrnum="$(echo "$msrparts" | awk '{print $1}')"
 	fi
 	if [ "${#dataparts[@]}" -gt 1 ]; then
 		#There is more than 1 data partition, so we have to prompt the user to select which one they want
@@ -939,14 +939,14 @@ function verify_partitions_uefi {
 		done
 		create_menu "$tempdir/dataparts" "Select Your Main Windows Partition" 1>&2
 		#Now we get the device path and number for the datapartition
-		export datapart="$(echo "$itemname" | awk '{print $2}')"
-		export datanum="$(echo "${dataparts[$(($option - 1))]}" | awk '{print $1}')"
+		datapart="$(echo "$itemname" | awk '{print $2}')"
+		datanum="$(echo "${dataparts[$(($option - 1))]}" | awk '{print $1}')"
 	elif [ "${#dataparts[@]}" = 0 ]; then
 		echo "Error: Disk does not contain a main data partition" 1>&2
 		return 1
 	else
-		export datapart="$(echo "$dataparts" | awk '{print $2}')"
-		export datanum="$(echo "$dataparts" | awk '{print $1}')"
+		datapart="$(echo "$dataparts" | awk '{print $2}')"
+		datanum="$(echo "$dataparts" | awk '{print $1}')"
 	fi
 	if [ "${#winreparts[@]}" -gt 1 ]; then
 		#There is more than 1 recovery partition, so we have to prompt the user to select which one they want
@@ -958,11 +958,11 @@ function verify_partitions_uefi {
 		done
 		create_menu "$tempdir/winreparts" "Select Your Recovery Partition"
 		#Now we get the device path and number for the recovery partition
-		export winrepart="$(echo "$itemname" | awk '{print $1}')"
-		export winrenum="$(echo "${winreparts[$(($option - 1))]}" | awk '{print $1}')"
+		winrepart="$(echo "$itemname" | awk '{print $1}')"
+		winrenum="$(echo "${winreparts[$(($option - 1))]}" | awk '{print $1}')"
 	else
-		export winrepart="$(echo "$winreparts" | awk '{print $2}')"
-		export winrenum="$(echo "$winreparts" | awk '{print $1}')"
+		winrepart="$(echo "$winreparts" | awk '{print $2}')"
+		winrenum="$(echo "$winreparts" | awk '{print $1}')"
 	fi
 	cat <<EOF
 GPT has been verified:
@@ -991,10 +991,10 @@ function yes_no {
 			echo y
 			;;
 		[nN])
-			#export the choice
 			echo n
 			;;
 		*)
+	unset yn
 			continue
 			;;
 		esac
@@ -1053,7 +1053,7 @@ if [ "$majorversion" ]; then
 fi
 if [ "$majorversion" = "7" ] && [ "$fw" != "bios" ]; then
 	echo "Warning: Installing Windows 7 on UEFI firmware is unsupported, reverting to BIOS" 1>&2
-	export fw="bios"
+	fw="bios"
 	read -t 1
 fi
 #Get the minimum required space for this Windows version
@@ -1065,7 +1065,7 @@ clear
 case "$(yes_no "Install additional drivers?")" in
 y)
 	clear
-	export drivers="$(ask_driver_dir)"
+	drivers="$(ask_driver_dir)"
 	;;
 n)
 	echo "Continuing to next step" 1>&2
@@ -1095,7 +1095,7 @@ if is_mounted $disk; then
 fi
 #Get path to Windows Recovery Image if present
 if ! is_removable "$disk"; then
-	export winre="$(detect_winre)"
+	winre="$(detect_winre)"
 fi
 #Now we generate the partition layout based on the firmware
 generate_sfdisk_script_$fw "$disk" >"$tempdir/disklayout"
