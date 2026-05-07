@@ -310,7 +310,7 @@ function format_boot {
 function format_efi {
 	is_blk "$efipart"
 	#Check if the ESP already contains a FAT32 filesystem
-	if [ "$(lsblk -nroFSVER)" = "FAT32" ] && [ "$(yes_no "Your EFI System Partition already contains a FAT32 filesystem. Format anyway?")" = "n" ]; then
+	if [ "$(lsblk -nroFSTYPE,FSVER "$efipart")" = "vfat FAT32" ] && [ "$(yes_no "Your EFI System Partition already contains a FAT32 filesystem. Format anyway?")" = "n" ]; then
 		#We return a value of 0 if both statements are true
 		return 0
 	fi
@@ -324,7 +324,7 @@ function format_partitions_bios {
 	#The script needs to exit if any of these commands fail
 	set -e
 	format_boot
-	if [ "$datapart" ]; then
+	if [ "$datapart" ] && [ "$datapart" != "$bootpart" ]; then
 		format_main
 	fi
 	if [ "$winrepart" ]; then
@@ -419,7 +419,7 @@ bcdboot W:\Windows /s S: /f UEFI
 EOF
 	if [ "$drivers" ]; then
 		cat <<EOF
-dism /add-driver /driver:W:\drivers /image:W: /recurse
+dism /add-driver /driver:W:\drivers /image:W:\ /recurse
 copy X:\windows\Logs\DISM\dism.log L:\dism.log
 EOF
 	fi
@@ -428,6 +428,7 @@ EOF
 		cat <<EOF
 W:\Windows\System32\Reagentc /Setreimage /Path R:\Recovery\WindowsRE /Target W:\Windows
 W:\Windows\System32\Reagentc /Setosimage /Path R:\Recovery\WindowsRE /index 1 /Target W:\Windows
+W:\Windows\System32\Reagentc /Enable /Target W:\Windows
 EOF
 	fi
 }
@@ -547,13 +548,13 @@ function generate_sfdisk_script_uefi {
 label: gpt
 device: $1
 unit: sectors
-start=$efistart, size= $efisize, type=uefi, name="EFI system partition"
+start=$efistart, size=$efisize, type=uefi, name="EFI system partition"
 start=$msrstart, size=$msrsize, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE, name="Microsoft reserved"
 start=$datastart, size=$datasize, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="Microsoft basic data"
 EOF
 	if ! is_removable "$1"; then
 		cat <<EOF
-start=$winrestart, size=$winresize, type=DE94BBA4-06D1-4D40-A16A-BFD50179D6AC, uuid=06FA0E52-4F8C-480A-BF8C-EE24B612F689, name="Windows RE", attrs="RequiredPartition GUID:63"
+start=$winrestart, size=$winresize, type=DE94BBA4-06D1-4D40-A16A-BFD50179D6AC, uuid=06FA0E52-4F8C-480A-BF8C-EE24B612F689, name="Windows RE", attrs="RequiredPartition,GUID:63"
 EOF
 	fi
 	return 0
@@ -582,7 +583,7 @@ function image_select {
 }
 function is_blk {
 	if [ -z "$1" ] || ! lsblk -nroNAME -p | grep -qw "$1"; then
-		echo "Error: $disk: Not a block device" 1>&2
+		echo "Error: $1: Not a block device" 1>&2
 		exit 1
 	fi
 }
@@ -602,18 +603,16 @@ function is_mounted {
 	fi
 }
 function is_removable {
-	is_blk $1
-	#Check if disk is removable
-	case "$(lsblk -dnroHOTPLUG "$1")" in
-	1)
-		#Disk is removable
-		true
-		;;
-	0)
-		#Disk is not removable
-		false
-		;;
-	esac
+	is_blk "$1"
+	local rm hotplug tran
+	rm="$(lsblk -dnroRM "$1")"
+	hotplug="$(lsblk -dnroHOTPLUG "$1")"
+	tran="$(lsblk -dnroTRAN "$1")"
+	# Portable installs should include classic removable media as well as hotplugged USB disks.
+	if [ "$rm" = "1" ] || [ "$hotplug" = "1" ] || [ "$tran" = "usb" ]; then
+		return 0
+	fi
+	return 1
 }
 function iso_mount {
 	mount --mkdir -r "$iso" "$tempdir/iso"
@@ -670,7 +669,7 @@ EOF
 function min_size {
 	#Loop through the array elements
 	for i in "${!supported_versions[@]}"; do
-		if [ "${supported_versions[$i]}" = "$majorversion" ]; then
+		if [ "${supported_versions[$i]}" = "$1" ]; then
 			#Found version, so we print its size to STDout
 			echo "${size[$i]}"
 			return
@@ -711,7 +710,7 @@ function read_log {
 		cat "$tempdir/log/log.txt"
 		if [ -f "$tempdir/log/dism.log" ]; then
 			#We copy the DISM log to /var/log/wininstall/dism.log
-			mkdir /var/log/wininstall
+			mkdir -p /var/log/wininstall
 			cp "$tempdir/log/dism.log" "/var/log/wininstall/"
 			echo "The windows DISM log can be found at: /var/log/wininstall/dism.log"
 		fi
@@ -746,13 +745,14 @@ function supported_windows_version {
 		#Selected Windows version is Windows Vista (not supported)
 		echo "Error: Windows Vista installation images are not supported at this time" 1>&2
 		false
-	elif [ "$majorversion" = "8.1" ] || [ "$majorversion" -ge 7 ]; then
+	elif [ "$1" = "8.1" ] || [ "$1" -ge 7 ]; then
 		#Version is supported
 		true
 	else
 		#Version can't be recognized
 		#This should never execute when using a genuine windows ISO
 		echo "Warning: Unrecognized Windows version" 1>&2
+		false
 	fi
 }
 function total_sectors {
@@ -775,10 +775,10 @@ function umount_disk {
 function verify_partitions_bios {
 	udevadm settle || sleep 1
 	#Check to make sure $1 is actually a disk
-	is_blk $1
+	is_blk "$1"
 	#Check that the disk is in DOS format
 	if [ "$(part_table "$1")" != "dos" ]; then
-		echo "Error: "$1": Disk partition table is not DOS" 1>&2
+		echo "Error: $1: Disk partition table is not DOS" 1>&2
 		return 1
 	fi
 	#Get an array containing the disk partitions
@@ -813,40 +813,42 @@ function verify_partitions_bios {
 		echo "Error: Disk does not contain a boot partition" 1>&2
 		return 1
 	else
-		bootpart="$(echo "$bootparts" | awk '{print $2}')"
-		bootnum="$(echo "$bootparts" | awk '{print $1}')"
+		bootpart="$(echo "${bootparts[0]}" | awk '{print $2}')"
+		bootnum="$(echo "${bootparts[0]}" | awk '{print $1}')"
 	fi
 	if [ "${#dataparts[@]}" -gt 1 ]; then
 		#There is more than 1 data partition, so we have to prompt the user to select which one they want
 		clear
 		echo "Your main Windows partition could not be detected automatically" 1>&2
 		#Dump partition path and sizes to a file
+		: >"$tempdir/dataparts"
 		for i in "${dataparts[@]}"; do
-			echo "$i" | awk '{print $2 $3}' | numfmt --field=2 --to=si >>"$tempdir/dataparts"
+			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si >>"$tempdir/dataparts"
 		done
 		create_menu "$tempdir/dataparts" "Select Your Main Windows Partition" 1>&2
 		#Now we get the device path and number for the datapartition
-		datapart="$(echo "$itemname" | awk '{print $2}')"
+		datapart="$(echo "$itemname" | awk '{print $1}')"
 		datanum="$(echo "${dataparts[$(($option - 1))]}" | awk '{print $1}')"
 	else
-		datapart="$(echo "$dataparts" | awk '{print $2}')"
-		datanum="$(echo "$dataparts" | awk '{print $1}')"
+		datapart="$(echo "${dataparts[0]}" | awk '{print $2}')"
+		datanum="$(echo "${dataparts[0]}" | awk '{print $1}')"
 	fi
 	if [ "${#winreparts[@]}" -gt 1 ]; then
 		#There is more than 1 recovery partition, so we have to prompt the user to select which one they want
 		clear
 		echo "Your recovery partition could not be detected automatically" 1>&2
 		#Dump partition path and sizes to a file
+		: >"$tempdir/winreparts"
 		for i in "${winreparts[@]}"; do
-			echo "$i" | awk '{print $2 $3}' | numfmt --field=2 --to=si >>"$tempdir/winreparts"
+			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si >>"$tempdir/winreparts"
 		done
 		create_menu "$tempdir/winreparts" "Select Your Recovery Partition"
 		#Now we get the device path and number for the recovery partition
 		winrepart="$(echo "$itemname" | awk '{print $1}')"
 		winrenum="$(echo "${winreparts[$(($option - 1))]}" | awk '{print $1}')"
 	else
-		winrepart="$(echo "$winreparts" | awk '{print $2}')"
-		winrenum="$(echo "$winreparts" | awk '{print $1}')"
+		winrepart="$(echo "${winreparts[0]}" | awk '{print $2}')"
+		winrenum="$(echo "${winreparts[0]}" | awk '{print $1}')"
 	fi
 	#We set the data partition variable equal to the boot partition if no data partition was found
 	if is_removable "$1" && [ -z "$datapart" ] && [ -z "$datanum" ]; then
@@ -874,10 +876,10 @@ EOF
 function verify_partitions_uefi {
 	udevadm settle || sleep 1
 	#Check to make sure $1 is actually a disk
-	is_blk $1
+	is_blk "$1"
 	#Check that the disk is in GPT format
 	if [ "$(part_table "$1")" != "gpt" ]; then
-		echo "Error: "$1": Disk partition table is not GPT" 1>&2
+		echo "Error: $1: Disk partition table is not GPT" 1>&2
 		return 1
 	fi
 	#Get an array containing the disk partitions
@@ -914,8 +916,8 @@ function verify_partitions_uefi {
 		echo "Error: Disk does not contain an EFI System Partition" 1>&2
 		return 1
 	else
-		efipart="$(echo "$efiparts" | awk '{print $2}')"
-		efinum="$(echo "$efiparts" | awk '{print $1}')"
+		efipart="$(echo "${efiparts[0]}" | awk '{print $2}')"
+		efinum="$(echo "${efiparts[0]}" | awk '{print $1}')"
 	fi
 	#Now we check for MSR
 	if [ "${#msrparts[@]}" -gt 1 ]; then
@@ -926,43 +928,45 @@ function verify_partitions_uefi {
 		echo "Error: Disk does not contain a Microsoft system reserved partition" 1>&2
 		return 1
 	else
-		msrpart="$(echo "$msrparts" | awk '{print $2}')"
-		msrnum="$(echo "$msrparts" | awk '{print $1}')"
+		msrpart="$(echo "${msrparts[0]}" | awk '{print $2}')"
+		msrnum="$(echo "${msrparts[0]}" | awk '{print $1}')"
 	fi
 	if [ "${#dataparts[@]}" -gt 1 ]; then
 		#There is more than 1 data partition, so we have to prompt the user to select which one they want
 		clear
 		echo "Your main Windows partition could not be detected automatically" 1>&2
 		#Dump partition path and sizes to a file
+		: >"$tempdir/dataparts"
 		for i in "${dataparts[@]}"; do
-			echo "$i" | awk '{print $2 $3}' | numfmt --field=2 --to=si >>"$tempdir/dataparts"
+			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si >>"$tempdir/dataparts"
 		done
 		create_menu "$tempdir/dataparts" "Select Your Main Windows Partition" 1>&2
 		#Now we get the device path and number for the datapartition
-		datapart="$(echo "$itemname" | awk '{print $2}')"
+		datapart="$(echo "$itemname" | awk '{print $1}')"
 		datanum="$(echo "${dataparts[$(($option - 1))]}" | awk '{print $1}')"
 	elif [ "${#dataparts[@]}" = 0 ]; then
 		echo "Error: Disk does not contain a main data partition" 1>&2
 		return 1
 	else
-		datapart="$(echo "$dataparts" | awk '{print $2}')"
-		datanum="$(echo "$dataparts" | awk '{print $1}')"
+		datapart="$(echo "${dataparts[0]}" | awk '{print $2}')"
+		datanum="$(echo "${dataparts[0]}" | awk '{print $1}')"
 	fi
 	if [ "${#winreparts[@]}" -gt 1 ]; then
 		#There is more than 1 recovery partition, so we have to prompt the user to select which one they want
 		clear
 		echo "Your recovery partition could not be detected automatically" 1>&2
 		#Dump partition path and sizes to a file
+		: >"$tempdir/winreparts"
 		for i in "${winreparts[@]}"; do
-			echo "$i" | awk '{print $2 $3}' | numfmt --field=2 --to=si >>"$tempdir/winreparts"
+			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si >>"$tempdir/winreparts"
 		done
 		create_menu "$tempdir/winreparts" "Select Your Recovery Partition"
 		#Now we get the device path and number for the recovery partition
 		winrepart="$(echo "$itemname" | awk '{print $1}')"
 		winrenum="$(echo "${winreparts[$(($option - 1))]}" | awk '{print $1}')"
 	else
-		winrepart="$(echo "$winreparts" | awk '{print $2}')"
-		winrenum="$(echo "$winreparts" | awk '{print $1}')"
+		winrepart="$(echo "${winreparts[0]}" | awk '{print $2}')"
+		winrenum="$(echo "${winreparts[0]}" | awk '{print $1}')"
 	fi
 	cat <<EOF
 GPT has been verified:
@@ -1043,7 +1047,7 @@ extract_xml "$wimpath"
 #Next we run the get_version function to detect the Windows version we're dealing with
 majorversion=$(get_version)
 #Check if version is supported
-if ! supported_windows_version "$majorversion" ]; then
+if ! supported_windows_version "$majorversion"; then
 	exit 1
 fi
 #print the Windows version to the terminal
@@ -1113,7 +1117,10 @@ echo "Formatting..." 1>&2
 partition "$disk" "$tempdir/disklayout"
 #The verify_partitions_bios and verify_partitions_uefi  functions spit out junk to stdout and stderr.
 #It's mainly meant for manual partitioning which I may add later, but we redirect its output to /dev/null when doing automation
-verify_partitions_$fw "$disk" &>/dev/null 2>&1
+if ! verify_partitions_$fw "$disk" &>/dev/null 2>&1; then
+	echo "Error: Partition verification failed after repartitioning $disk" 1>&2
+	exit 1
+fi
 #Now we generate the diskpart and install scripts
 #These scripts will do the following:
 #Mount the correct partitions
