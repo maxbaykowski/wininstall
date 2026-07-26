@@ -190,7 +190,7 @@ function create_menu {
 	fi
 	#parse options
 	for i in $(seq 1 $end); do
-		echo "$i $(sed -n "${i}p" "$1")" >>$tempdir/menulist
+		echo "$i. $(sed -n "${i}p" "$1")" >>$tempdir/menulist
 	done
 	#Display menu options to the user
 	cat $tempdir/menulist 1>&2
@@ -1081,7 +1081,7 @@ y)
 	drivers="$(ask_driver_dir)"
 	;;
 n)
-	echo "Continuing to next step" 1>&2
+	echo "Not installing additional drivers." 1>&2
 	;;
 esac
 
@@ -1101,7 +1101,8 @@ if is_mounted $disk; then
 		echo "Success"
 		;;
 	n)
-		echo "Error: $disk is mounted on the filesystem" 1>&2
+		echo "Not unmounting disk." 1>&2
+				echo "Error: $disk is mounted on the filesystem" 1>&2
 		exit 1
 		;;
 	esac
