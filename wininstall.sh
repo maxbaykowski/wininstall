@@ -43,7 +43,8 @@ function ask_driver_dir {
 		echo "Please enter the path to the folder containing drivers" 1>&2
 		read -e driverfolder
 		clear 1>&2
-				#Checks
+		sleep 0.2
+						#Checks
 		if [ -z "$driverfolder" ]; then
 			#User didn't input anything
 			echo "Error: you didn't input anything. Try again." 1>&2
@@ -206,10 +207,12 @@ function create_menu {
 		if [ "$end" -lt 10 ]; then
 			read -sn 1 char #For menus with less than 10 options
 			clear 1>&2
-				else
+			sleep 0.2
+							else
 			read -e char #For menus that have more than 10 options
 			clear 1>&2
-					fi
+			sleep 0.2
+								fi
 		#Check if input is a valid option
 		for i in $(seq 1 $end); do
 			if [ "$char" = "$i" ]; then
@@ -625,7 +628,8 @@ function iso_select {
 		echo "Please enter the path of the ISO file to install" 1>&2
 		read -e iso
 		clear 1>&2
-					#Checks
+		sleep 0.2
+							#Checks
 		if [ -z "$iso" ]; then
 			#User didn't input anything
 			echo "Error: you didn't input anything. Try again." 1>&2
@@ -994,7 +998,8 @@ function yes_no {
 		#Read user input
 		read -esn 1 yn
 		clear 1>&2
-				case "$yn" in
+		sleep 0.2
+						case "$yn" in
 		[yY])
 			echo y
 			;;
@@ -1113,6 +1118,7 @@ echo "Warning: All data on disk $disk will be lost. Press enter to continue, or 
 #Wait for the user to press enter
 read
 clear 1>&2
+sleep 0.2
 #Wait 5 more seconds, just to be sure
 echo "Warning: $disk: Destroying all data in 5 seconds, press control+c to abort" 1>&2
 sleep 5
