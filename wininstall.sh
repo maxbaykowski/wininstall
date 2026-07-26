@@ -284,7 +284,7 @@ function disk_select {
 			continue
 		elif [ "$(lsblk -bdrnoSIZE "$i")" -lt "$minsize" ]; then
 			#The disk is too small
-			echo "Error: Disk must be at least $(print_in_human_readable_format $minsize) in size" 1>&2
+			echo "Error: a disk of $(print_in_human_readable_format $minsize) or larger is required for Windows $majorversion" 1>&2
 			unset i
 			continue
 		fi
@@ -704,7 +704,7 @@ function part_table {
 	lsblk -dnroPTTYPE "$1"
 }
 function print_in_human_readable_format {
-	numfmt --to=si --format '%1f' "$1"
+	numfmt --to=si --suffix=B --format '%1f' "$1"
 }
 function read_log {
 	is_blk "$logloop"
