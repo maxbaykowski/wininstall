@@ -42,7 +42,8 @@ function ask_driver_dir {
 		#Prompt the user for the ISO file path
 		echo "Please enter the path to the folder containing drivers" 1>&2
 		read -e driverfolder
-		#Checks
+		clear 1>&2
+				#Checks
 		if [ -z "$driverfolder" ]; then
 			#User didn't input anything
 			echo "Error: you didn't input anything. Try again." 1>&2
@@ -204,9 +205,11 @@ function create_menu {
 	while true; do
 		if [ "$end" -lt 10 ]; then
 			read -sn 1 char #For menus with less than 10 options
-		else
+			clear 1>&2
+				else
 			read -e char #For menus that have more than 10 options
-		fi
+			clear 1>&2
+					fi
 		#Check if input is a valid option
 		for i in $(seq 1 $end); do
 			if [ "$char" = "$i" ]; then
@@ -270,7 +273,6 @@ function disk_select {
 	echo "Refresh" >>"$tempdir/disks"
 	while [ -z "$i" ]; do
 		#Here comes the fun part
-		clear
 		create_menu "$tempdir/disks" "Please Select the Disk where Windows should be installed"
 		local i="$(echo "$itemname" | awk '{print $1}')"
 		if [ "$itemname" = "Refresh" ]; then
@@ -622,7 +624,8 @@ function iso_select {
 		#Prompt the user for the ISO file path
 		echo "Please enter the path of the ISO file to install" 1>&2
 		read -e iso
-		#Checks
+		clear 1>&2
+					#Checks
 		if [ -z "$iso" ]; then
 			#User didn't input anything
 			echo "Error: you didn't input anything. Try again." 1>&2
@@ -818,7 +821,7 @@ function verify_partitions_bios {
 	fi
 	if [ "${#dataparts[@]}" -gt 1 ]; then
 		#There is more than 1 data partition, so we have to prompt the user to select which one they want
-		clear
+		
 		echo "Your main Windows partition could not be detected automatically" 1>&2
 		#Dump partition path and sizes to a file
 		: >"$tempdir/dataparts"
@@ -835,7 +838,7 @@ function verify_partitions_bios {
 	fi
 	if [ "${#winreparts[@]}" -gt 1 ]; then
 		#There is more than 1 recovery partition, so we have to prompt the user to select which one they want
-		clear
+		
 		echo "Your recovery partition could not be detected automatically" 1>&2
 		#Dump partition path and sizes to a file
 		: >"$tempdir/winreparts"
@@ -933,7 +936,7 @@ function verify_partitions_uefi {
 	fi
 	if [ "${#dataparts[@]}" -gt 1 ]; then
 		#There is more than 1 data partition, so we have to prompt the user to select which one they want
-		clear
+		
 		echo "Your main Windows partition could not be detected automatically" 1>&2
 		#Dump partition path and sizes to a file
 		: >"$tempdir/dataparts"
@@ -953,7 +956,7 @@ function verify_partitions_uefi {
 	fi
 	if [ "${#winreparts[@]}" -gt 1 ]; then
 		#There is more than 1 recovery partition, so we have to prompt the user to select which one they want
-		clear
+		
 		echo "Your recovery partition could not be detected automatically" 1>&2
 		#Dump partition path and sizes to a file
 		: >"$tempdir/winreparts"
@@ -990,7 +993,8 @@ function yes_no {
 	while [ -z "$yn" ]; do
 		#Read user input
 		read -esn 1 yn
-		case "$yn" in
+		clear 1>&2
+				case "$yn" in
 		[yY])
 			echo y
 			;;
@@ -1025,7 +1029,7 @@ size=("20000000000" "20000000000" "20000000000" "32000000000" "64000000000")
 #Ensure that all requirements exist
 check_reqs "${reqs[@]}"
 #Call ISO select, which prompts the user to select a Windows ISO.
-clear
+
 iso="$(iso_select)"
 #Mount the selected ISO and exit if it fails
 if ! iso_mount; then
@@ -1052,7 +1056,7 @@ if ! supported_windows_version "$majorversion"; then
 fi
 #print the Windows version to the terminal
 if [ "$majorversion" ]; then
-	clear
+	
 	echo "Windows $majorversion detected."
 fi
 if [ "$majorversion" = "7" ] && [ "$fw" != "bios" ]; then
@@ -1065,22 +1069,22 @@ minsize=$(min_size "$majorversion")
 #Select the WIM image to be installed
 image=$(image_select)
 #Prompt the user whether to install drivers
-clear
+
 case "$(yes_no "Install additional drivers?")" in
 y)
-	clear
+	
 	drivers="$(ask_driver_dir)"
 	;;
 n)
 	echo "Continuing to next step" 1>&2
 	;;
 esac
-clear
+
 #Now we get the target disk
 disk_select
 #Check to see if the disk is mounted
 if is_mounted $disk; then
-	clear
+	
 	case "$(yes_no "The disk $disk is currently mounted. Attempt to unmount it?")" in
 	y)
 		echo "Attempting to unmount disk..."
@@ -1103,16 +1107,16 @@ if ! is_removable "$disk"; then
 fi
 #Now we generate the partition layout based on the firmware
 generate_sfdisk_script_$fw "$disk" >"$tempdir/disklayout"
-clear
+
 #Warn of the impending disk format
 echo "Warning: All data on disk $disk will be lost. Press enter to continue, or control+C to abort." 1>&2
 #Wait for the user to press enter
 read
-clear
+clear 1>&2
 #Wait 5 more seconds, just to be sure
 echo "Warning: $disk: Destroying all data in 5 seconds, press control+c to abort" 1>&2
 sleep 5
-clear
+
 echo "Formatting..." 1>&2
 partition "$disk" "$tempdir/disklayout"
 #The verify_partitions_bios and verify_partitions_uefi  functions spit out junk to stdout and stderr.
