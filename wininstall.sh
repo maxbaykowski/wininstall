@@ -268,7 +268,7 @@ function detect_winre {
 function disk_select {
 	local i=""
 	#Print disks to a file
-	lsblk -bdI3,8,65,66,67,68,69,70,71,128,129,130,131,132,133,134,135,179,180,259 -rnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
+	lsblk -bdI3,8,65,66,67,68,69,70,71,128,129,130,131,132,133,134,135,179,180,259 -rnoNAME,SIZE -p | numfmt --field=2 --to=si --suffix=B >"$tempdir/disks"
 	#Echo the refresh option
 	echo "Refresh" >>"$tempdir/disks"
 	while [ -z "$i" ]; do
@@ -278,7 +278,7 @@ function disk_select {
 		if [ "$itemname" = "Refresh" ]; then
 			unset i
 			#Print disks to file, overwriting the original
-			lsblk -bdI3,8,65,66,67,68,69,70,71,128,129,130,131,132,133,134,135,179,180,259 -rnoNAME,SIZE -p | numfmt --field=2 --to=si >"$tempdir/disks"
+			lsblk -bdI3,8,65,66,67,68,69,70,71,128,129,130,131,132,133,134,135,179,180,259 -rnoNAME,SIZE -p | numfmt --field=2 --to=si --suffix=B >"$tempdir/disks"
 			#Echo the refresh option
 			echo "Refresh" >>"$tempdir/disks"
 			continue
@@ -826,7 +826,7 @@ function verify_partitions_bios {
 		#Dump partition path and sizes to a file
 		: >"$tempdir/dataparts"
 		for i in "${dataparts[@]}"; do
-			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si >>"$tempdir/dataparts"
+			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si --suffix=B >>"$tempdir/dataparts"
 		done
 		create_menu "$tempdir/dataparts" "Select Your Main Windows Partition" 1>&2
 		#Now we get the device path and number for the datapartition
@@ -843,7 +843,7 @@ function verify_partitions_bios {
 		#Dump partition path and sizes to a file
 		: >"$tempdir/winreparts"
 		for i in "${winreparts[@]}"; do
-			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si >>"$tempdir/winreparts"
+			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si --suffix=B >>"$tempdir/winreparts"
 		done
 		create_menu "$tempdir/winreparts" "Select Your Recovery Partition"
 		#Now we get the device path and number for the recovery partition
@@ -941,7 +941,7 @@ function verify_partitions_uefi {
 		#Dump partition path and sizes to a file
 		: >"$tempdir/dataparts"
 		for i in "${dataparts[@]}"; do
-			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si >>"$tempdir/dataparts"
+			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si --suffix=B >>"$tempdir/dataparts"
 		done
 		create_menu "$tempdir/dataparts" "Select Your Main Windows Partition" 1>&2
 		#Now we get the device path and number for the datapartition
@@ -961,7 +961,7 @@ function verify_partitions_uefi {
 		#Dump partition path and sizes to a file
 		: >"$tempdir/winreparts"
 		for i in "${winreparts[@]}"; do
-			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si >>"$tempdir/winreparts"
+			echo "$i" | awk '{print $2, $3}' | numfmt --field=2 --to=si --suffix=B >>"$tempdir/winreparts"
 		done
 		create_menu "$tempdir/winreparts" "Select Your Recovery Partition"
 		#Now we get the device path and number for the recovery partition
