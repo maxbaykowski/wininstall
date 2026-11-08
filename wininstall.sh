@@ -75,6 +75,28 @@ function autodetect_windows_version {
 		return 1
 	fi
 }
+function batch_check_fatal {
+	#Prints batch code which stops the install script if the previous command failed
+	#$1 is the name of the step, which must not contain parentheses
+	#The status file is how Linux finds out what happened. No goto is used here because labels are unreliable in batch files with Unix line endings
+	cat <<EOF
+if %errorlevel% neq 0 (
+	echo Error: $1 failed with exit code %errorlevel%
+	> L:\status.txt echo FAILED $1
+	exit /b 1
+)
+EOF
+}
+function batch_check_warning {
+	#Prints batch code which records a failed step, but lets the install script keep going
+	#This is for steps that Windows can boot without
+	cat <<EOF
+if %errorlevel% neq 0 (
+	echo Warning: $1 failed with exit code %errorlevel%
+	>> L:\warnings.txt echo $1
+)
+EOF
+}
 function check_reqs {
 	if [ -z "$1" ]; then
 		#No array was specified
@@ -229,6 +251,8 @@ function create_menu {
 			echo "Error: invalid option. Try again." 1>&2
 		fi
 		#A menu with less than 10 options will display nothing as the script ignores invalid single digits
+		#The screen was cleared after reading input, so the menu has to be redrawn
+		cat "$tempdir/menulist" 1>&2
 	done
 }
 function detect_fw {
@@ -259,8 +283,10 @@ function detect_winre {
 	#A return value of 2 means failed
 	#Next we search for the recovery image in the System32 directory
 	#This is a pain because Linux file names are case sensitive and Windows isn't
-	if [ -f "$tempdir/wim/Windows/System32/Recovery/Winre.wim" ] || [ -f "$tempdir/wim/Windows/System32/Recovery/winRE.wim" ]; then
-		echo "$tempdir/wim/Windows/System32/Recovery/"*.wim
+	local winrepath
+	winrepath="$(find "$tempdir/wim/Windows/System32/Recovery" -maxdepth 1 -type f -iname 'winre.wim' -print -quit 2>/dev/null)"
+	if [ "$winrepath" ]; then
+		echo "$winrepath"
 		wimunmount "$tempdir/wim"
 		return 0
 	else
@@ -397,45 +423,58 @@ function generate_install_script_bios {
 	cat <<EOF
 @echo off
 diskpart /s X:\mountparts
+$(batch_check_fatal "diskpart")
 bcdboot $windowsletter:\Windows /s S:
+$(batch_check_fatal "bcdboot")
 bootsect /nt60 S: /mbr
+$(batch_check_fatal "bootsect")
 EOF
 	if [ "$drivers" ]; then
 		cat <<EOF
 dism /add-driver /driver:$windowsletter:\drivers /image:$windowsletter:\ /recurse
+$(batch_check_warning "DISM driver installation")
 copy X:\windows\Logs\DISM\dism.log L:\dism.log
 EOF
 	fi
-	if [ "$winrepart" ] && [ "$winrenum" ]; then
+	if [ "$winre" ] && [ "$winrepart" ] && [ "$winrenum" ]; then
 		#Register Windows Recovery
 		cat <<EOF
 $windowsletter:\Windows\System32\Reagentc /Setreimage /Path R:\Recovery\WindowsRE /Target $windowsletter:\Windows
-$windowsletter:\Windows\System32\Reagentc /Setosimage /Path R:\Recovery\WindowsRE /index 1 /Target $windowsletter:\Windows
-$windowsletter:\Windows\System32\Reagentc /Enable /Target $windowsletter:\Windows
+$(batch_check_warning "Reagentc Setreimage")
 EOF
 	fi
+	#This is only reached if every required step succeeded
+	cat <<EOF
+> L:\status.txt echo SUCCESS
+EOF
 }
 function generate_install_script_uefi {
 	#This is the function that will set up BCD entries as well as register WindowsRE (if present)
 	cat <<EOF
 @echo off
 diskpart /s X:\mountparts
+$(batch_check_fatal "diskpart")
 bcdboot W:\Windows /s S: /f UEFI
+$(batch_check_fatal "bcdboot")
 EOF
 	if [ "$drivers" ]; then
 		cat <<EOF
 dism /add-driver /driver:W:\drivers /image:W:\ /recurse
+$(batch_check_warning "DISM driver installation")
 copy X:\windows\Logs\DISM\dism.log L:\dism.log
 EOF
 	fi
-	if [ "$winrepart" ] && [ "$winrenum" ]; then
+	if [ "$winre" ] && [ "$winrepart" ] && [ "$winrenum" ]; then
 		#Register Windows Recovery
 		cat <<EOF
 W:\Windows\System32\Reagentc /Setreimage /Path R:\Recovery\WindowsRE /Target W:\Windows
-W:\Windows\System32\Reagentc /Setosimage /Path R:\Recovery\WindowsRE /index 1 /Target W:\Windows
-W:\Windows\System32\Reagentc /Enable /Target W:\Windows
+$(batch_check_warning "Reagentc Setreimage")
 EOF
 	fi
+	#This is only reached if every required step succeeded
+	cat <<EOF
+> L:\status.txt echo SUCCESS
+EOF
 }
 function generate_install_scripts {
 	#Make scripts directory
@@ -493,24 +532,33 @@ EOF
 	local used="$(alignment_value "$1")"
 	#This is the start of our system partition
 	local systemstart=$used
-	#The size of our system partition is 200 MB
-	local systemsize="$(align_down $(size_to_sectors 200000000 "$1") "$1")"
+	#The size of our system partition is 350 MiB, the same size Windows 8 Setup uses, as Windows may try to place WinRE here
+	local systemsize="$(align_down $(size_to_sectors 367001600 "$1") "$1")"
 	#We add that to the used space
 	local used=$(($used + $systemsize))
 	#This is also the data partition start
 	local datastart=$used
-	#Before we can calculate the data partition size, we must calculate the recovery partition start and size
-	local winresize="$(align_down $(size_to_sectors 650000000 "$1") "$1")"
-	#Now we use this data to calculate the start of the recovery partition
-	local winrestart="$(align_up $(($alignedend - $winresize)) "$1")"
-	#Now we subtract the data partition start from the start of the recovery partition to get the data partition's size
-	local datasize="$(align_down $(($winrestart - $datastart)) "$1")"
+	if [ "$winre" ]; then
+		#Before we can calculate the data partition size, we must calculate the recovery partition start and size
+		local winresize="$(align_down $(size_to_sectors 650000000 "$1") "$1")"
+		#Now we use this data to calculate the start of the recovery partition
+		local winrestart="$(align_up $(($alignedend - $winresize)) "$1")"
+		#Now we subtract the data partition start from the start of the recovery partition to get the data partition's size
+		local datasize="$(align_down $(($winrestart - $datastart)) "$1")"
+	else
+		#There is no recovery partition, so the data partition takes up the rest of the disk
+		local datasize="$(align_down $(($alignedend - $datastart)) "$1")"
+	fi
 	#Now we print the script to stdout
 	cat <<EOF
 start=$systemstart, size=$systemsize, type=7, bootable
 start=$datastart, size=$datasize, type=7
+EOF
+	if [ "$winre" ]; then
+		cat <<EOF
 start=$winrestart, size=$winresize, type=27
 EOF
+	fi
 	return 0
 }
 function generate_sfdisk_script_uefi {
@@ -536,12 +584,12 @@ function generate_sfdisk_script_uefi {
 	used=$(($used + $msrsize))
 	#This is also the main data partition start
 	local datastart=$used
-	if is_removable "$1"; then
+	if [ -z "$winre" ]; then
 		#The size of the data partition takes up the rest of the disk, as there is no recovery
 		#We subtract the data partition start from the aligned end of the disk to get its size
 		local datasize="$(align_down $(($alignedend - $datastart)) "$1")"
 	else
-		#Non-removable media does have recovery, so we calculate the recovery partition size
+		#We have a recovery image, so we calculate the recovery partition size
 		local winresize="$(align_down $(size_to_sectors 650000000 "$1") "$1")"
 		#Now we use this data to calculate the start of the recovery partition
 		local winrestart="$(align_up $(($alignedend - $winresize)) "$1")"
@@ -557,7 +605,7 @@ start=$efistart, size=$efisize, type=uefi, name="EFI system partition"
 start=$msrstart, size=$msrsize, type=E3C9E316-0B5C-4DB8-817D-F92DF00215AE, name="Microsoft reserved"
 start=$datastart, size=$datasize, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name="Microsoft basic data"
 EOF
-	if ! is_removable "$1"; then
+	if [ "$winre" ]; then
 		cat <<EOF
 start=$winrestart, size=$winresize, type=DE94BBA4-06D1-4D40-A16A-BFD50179D6AC, uuid=06FA0E52-4F8C-480A-BF8C-EE24B612F689, name="Windows RE", attrs="RequiredPartition,GUID:63"
 EOF
@@ -670,6 +718,8 @@ EOF
 	#Set it up as a loop device
 	losetup -fP "$tempdir/log.img" || return 1
 	logloop="$(losetup -lnONAME,BACK-FILE | awk -v imagepath="$tempdir/log.img" '$2==imagepath {print $1}')"
+	#Wait for the partition's device node to appear before formatting it
+	udevadm settle || sleep 1
 	#We're not done yet, we still have to format the virtual disk as FAT32
 	mkfs.vfat -F32 "${logloop}p1"
 }
@@ -712,28 +762,51 @@ function print_in_human_readable_format {
 }
 function read_log {
 	is_blk "$logloop"
-	mount --mkdir "${logloop}p1" "$tempdir/log"
+	#Returns 0 if the install succeeded, 2 if it succeeded with warnings, and 1 if it failed
+	mount --mkdir "${logloop}p1" "$tempdir/log" || return 1
+	local result=1 status=""
 	if [ -f "$tempdir/log/log.txt" ]; then
 		cat "$tempdir/log/log.txt"
-		if [ -f "$tempdir/log/dism.log" ]; then
-			#We copy the DISM log to /var/log/wininstall/dism.log
-			mkdir -p /var/log/wininstall
-			cp "$tempdir/log/dism.log" "/var/log/wininstall/"
-			echo "The windows DISM log can be found at: /var/log/wininstall/dism.log"
-		fi
-		umount "$tempdir/log"
-		return
 	else
-		echo "Error: $tempdir/log: No such file or directory" 1>&2
-		umount "$tempdir/log"
-		return 1
+		echo "Error: $tempdir/log/log.txt: No such file or directory" 1>&2
 	fi
+	if [ -f "$tempdir/log/dism.log" ]; then
+		#We copy the DISM log to /var/log/wininstall/dism.log
+		mkdir -p /var/log/wininstall
+		cp "$tempdir/log/dism.log" "/var/log/wininstall/"
+		echo "The windows DISM log can be found at: /var/log/wininstall/dism.log"
+	fi
+	#Windows writes its files with CRLF line endings, so the carriage returns have to go
+	if [ -f "$tempdir/log/status.txt" ]; then
+		status="$(tr -d '\r' <"$tempdir/log/status.txt")"
+	fi
+	case "$status" in
+	SUCCESS)
+		result=0
+		;;
+	"FAILED "*)
+		echo "Error: Windows PE step failed: ${status#FAILED }" 1>&2
+		;;
+	*)
+		#The install script never reached the end, for example because Windows PE crashed
+		echo "Error: Windows PE did not report a result" 1>&2
+		;;
+	esac
+	if [ -f "$tempdir/log/warnings.txt" ]; then
+		echo "Warning: the following optional steps failed:" 1>&2
+		tr -d '\r' <"$tempdir/log/warnings.txt" | sed 's/^/  /' 1>&2
+		if [ "$result" = 0 ]; then
+			result=2
+		fi
+	fi
+	umount "$tempdir/log"
+	return "$result"
 }
 function root_check {
 	#Check if running as root
 	if [ "$(id -u)" != "0" ]; then
 		#We're not running as root, so rerun script using sudo
-		sudo $0
+		sudo "$0" "$@"
 		exit
 	fi
 }
@@ -752,7 +825,7 @@ function supported_windows_version {
 		#Selected Windows version is Windows Vista (not supported)
 		echo "Error: Windows Vista installation images are not supported at this time" 1>&2
 		false
-	elif [ "$1" = "8.1" ] || [ "$1" -ge 7 ]; then
+	elif [ "$1" = "8.1" ] || { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 7 ]; }; then
 		#Version is supported
 		true
 	else
@@ -764,7 +837,10 @@ function supported_windows_version {
 }
 function total_sectors {
 	is_blk "$1"
-	cat "/sys/block/$(basename "$1")/size"
+	local sectorsize
+	sectorsize="$(cat "/sys/block/$(basename "$1")/queue/hw_sector_size")"
+	#/sys/block/*/size is always in 512 byte units, so convert it to the disk's logical sectors
+	echo "$(($(cat "/sys/block/$(basename "$1")/size") * 512 / sectorsize))"
 }
 function umount_disk {
 	is_blk "$1"
@@ -1007,20 +1083,23 @@ function yes_no {
 			echo n
 			;;
 		*)
-	unset yn
+			unset yn
+			#The screen was cleared after reading input, so the prompt has to be printed again
+			echo "$1 (y/n)" 1>&2
 			continue
 			;;
 		esac
 	done
 }
 #We first do some initialization
-#Ensure that all requirements exist
-reqs=("awk" "fdisk" "mkfs.ntfs" "mkfs.vfat" "mkisofs" "mkwinpeimg" "ntfs-3g" "qemu-system-x86_64" "wimapply" "wimlib-imagex" "wimmount" "xmlstarlet")
-check_reqs "${reqs[@]}"
 #Trap the EXIT signal so that the cleanup function runs first
 trap cleanup EXIT
 #Make sure we're running as root
-root_check
+root_check "$@"
+#Ensure that all requirements exist
+#This happens after root_check so that it only runs once, and sees root's PATH
+reqs=("awk" "losetup" "lsblk" "mkfs.ntfs" "mkfs.vfat" "mkisofs" "mkwinpeimg" "ntfs-3g" "numfmt" "qemu-system-x86_64" "sfdisk" "udevadm" "wimapply" "wiminfo" "wimlib-imagex" "wimmount" "wimunmount" "xmlstarlet")
+check_reqs "${reqs[@]}"
 #Create temp directory
 tempdir=$(mktemp -d)
 #Make some directories
@@ -1031,8 +1110,6 @@ fw=$(detect_fw)
 supported_versions=("7" "8" "8.1" "10" "11")
 #And the minimum disk requirements for each OS
 size=("20000000000" "20000000000" "20000000000" "32000000000" "64000000000")
-#Ensure that all requirements exist
-check_reqs "${reqs[@]}"
 #Call ISO select, which prompts the user to select a Windows ISO.
 
 iso="$(iso_select)"
@@ -1071,6 +1148,10 @@ if [ "$majorversion" = "7" ] && [ "$fw" != "bios" ]; then
 fi
 #Get the minimum required space for this Windows version
 minsize=$(min_size "$majorversion")
+if [ -z "$minsize" ]; then
+	echo "Error: Could not determine the minimum disk size for Windows $majorversion" 1>&2
+	exit 1
+fi
 #Select the WIM image to be installed
 image=$(image_select)
 #Prompt the user whether to install drivers
@@ -1108,7 +1189,9 @@ if is_mounted $disk; then
 	esac
 fi
 #Get path to Windows Recovery Image if present
-if ! is_removable "$disk"; then
+#On Windows 7 and 8 we leave recovery alone, as OOBE sets it up from the image in System32\Recovery
+#An empty winre variable means no recovery partition is created and recovery is not registered
+if ! is_removable "$disk" && [ "$majorversion" != "7" ] && [ "$majorversion" != "8" ]; then
 	winre="$(detect_winre)"
 fi
 #Now we generate the partition layout based on the firmware
@@ -1125,7 +1208,10 @@ echo "Warning: $disk: Destroying all data in 5 seconds, press control+c to abort
 sleep 5
 
 echo "Formatting..." 1>&2
-partition "$disk" "$tempdir/disklayout"
+if ! partition "$disk" "$tempdir/disklayout"; then
+	echo "Error: Failed to partition $disk" 1>&2
+	exit 1
+fi
 #The verify_partitions_bios and verify_partitions_uefi  functions spit out junk to stdout and stderr.
 #It's mainly meant for manual partitioning which I may add later, but we redirect its output to /dev/null when doing automation
 if ! verify_partitions_$fw "$disk" &>/dev/null 2>&1; then
@@ -1147,7 +1233,7 @@ mkwinpeimg -s "$tempdir/scripts/logoutput.bat" -W "$tempdir/iso" -O "$tempdir/sc
 #Make log image
 echo "Making log image (required to see the output from Windows PE)"
 make_log_img
-if ! is_removable "$disk"; then
+if [ "$winre" ]; then
 	#We copy the recovery environment
 	echo "Copying Windows Recovery Environment..."
 	copy_winre
@@ -1168,10 +1254,17 @@ else
 	qemu-system-x86_64 -machine pc,accel=kvm:tcg -m 1024 -boot order=d,once=d,menu=off,strict=on -drive file="$tempdir/winpe.iso",if=ide,media=cdrom,readonly=on -drive file="$disk",if=ide,format=raw -drive file="$logloop",if=ide,format=raw -nographic
 fi
 #Print the log to stdout which contains the WIndows command lin output
-if read_log; then
+read_log
+case "$?" in
+0)
 	echo "Installation completed successfully"
-else
+	;;
+2)
+	echo "Installation completed with warnings"
+	;;
+*)
 	echo "Error: Installation failed" 1>&2
 	exit 1
-fi
+	;;
+esac
 exit
